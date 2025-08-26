@@ -8,9 +8,18 @@ import (
 	_ "embed"
 	"fmt"
 	"io"
+	"structs"
 
 	"github.com/cilium/ebpf"
 )
+
+type pipe_trackerEvent struct {
+	_    structs.HostLayout
+	Pid  uint32
+	Fd   int32
+	Ts   uint64
+	Comm [16]int8
+}
 
 // loadPipe_tracker returns the embedded CollectionSpec for pipe_tracker.
 func loadPipe_tracker() (*ebpf.CollectionSpec, error) {

@@ -14,11 +14,12 @@ import (
     "github.com/cilium/ebpf/rlimit"
 )
 
-type Event struct {
-    Pid uint32
-    Ts uint32
-    Comm [16]byte
-}
+//type Event struct {
+    //Pid uint32
+  //  Fd int
+ //   Ts uint32
+//    Comm [16]byte
+//}
 
 func main() {
     fn := "sys_write"
@@ -64,7 +65,7 @@ func main() {
 
     log.Println("waiting.....")
 
-    var event Event
+    var event pipe_trackerEvent
     for {
 	record, err := rd.Read()
 
@@ -82,7 +83,7 @@ func main() {
 	    continue
 	}
 
-	log.Printf("pid: %d", event.Pid)
+	log.Printf("pid: %d, fd: %d", event.Pid, event.Fd)
     }
     
 }
