@@ -14,13 +14,6 @@ import (
     "github.com/cilium/ebpf/rlimit"
 )
 
-//type Event struct {
-    //Pid uint32
-  //  Fd int
- //   Ts uint32
-//    Comm [16]byte
-//}
-
 func main() {
     fn := "sys_write"
     fn2 := "sys_dup2"
@@ -58,7 +51,6 @@ func main() {
     defer rd.Close()
     // log.Printf("Counting incoming packets on %s..", ifname)
 
-    //tick := time.Tick(time.Second)
     stop := make(chan os.Signal, 5)
     signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 
@@ -92,5 +84,4 @@ func main() {
 
 	log.Printf("pid: %d, fd: %d", event.Pid, event.Fd)
     }
-    
 }
