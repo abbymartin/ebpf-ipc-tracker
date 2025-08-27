@@ -23,6 +23,7 @@ import (
 
 func main() {
     fn := "sys_write"
+    fn2 := "sys_dup2"
 
     // lock memory for eBPF
     if err := rlimit.RemoveMemlock(); err != nil {
@@ -39,9 +40,15 @@ func main() {
     kp, err := link.Kprobe(fn, objs.KprobeWrite, nil)
 
     if err != nil {
-	    log.Fatal("Opening kprobe: %s", err)
+	log.Fatal("Opening kprobe: %s", err)
     }
     defer kp.Close()
+
+    kp2, err := link.Kprobe(fn2, objs.KprobeDup2, nil)
+    if err != nil {
+        log.Fatal("Opening kprobe: %s", err)
+    }
+    defer kp2.Close()
 
     // ringbuf reader
     rd, err := ringbuf.NewReader(objs.Writes)
