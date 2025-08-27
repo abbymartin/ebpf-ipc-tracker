@@ -4,6 +4,8 @@
 //#include <linux/bpf.h>
 //#include <bpf/bpf.h>
 #include <bpf/bpf_helpers.h>
+#include <bpf/bpf_tracing.h>
+#include <bpf/bpf_core_read.h>
 
 struct event {
     u32 pid;
@@ -42,6 +44,7 @@ int kprobe_write(struct trace_event_raw_sys_enter *ctx) {
 
     u64 ts = bpf_ktime_get_ns();
     u32 pid = bpf_get_current_pid_tgid();
+
     
     //check if pid in pipe_writers
     if (!bpf_map_lookup_elem(&pipe_writers, &pid)) {
@@ -69,15 +72,19 @@ int kprobe_write(struct trace_event_raw_sys_enter *ctx) {
 }
 
 SEC("kprobe/sys_enter_dup2")
-int kprobe_dup2(struct trace_event_raw_sys_enter *ctx) {
+int BPF_KPROBE(kprobe_dup2, struct pt_regs *regs) {
+//int kprobe_dup2(struct pt_regs *ctx) {
      bpf_printk("got here");
      u32 pid = bpf_get_current_pid_tgid();
+
+     struct task_struct *task = bpf_get_current_task_btf();
+
      //pid >>= 32;
 
-     //int old_fd = PT_REGS_PARM1_CORE(ctx);
-     //int new_fd = PT_REGS_PARM2_CORE(ctx);
-     int oldfd = ctx->args[0];   
-     int newfd = ctx->args[1];
+     int oldfd = PT_REGS_PARM1_CORE(regs);
+     int newfd = PT_REGS_PARM2_CORE(regs);
+     //int oldfd = ctx->args[0];   
+     //int newfd = ctx->args[1];
      bpf_printk("old: %d, new: %d", oldfd, newfd);
      int test = 1;
 
