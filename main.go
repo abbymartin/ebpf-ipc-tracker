@@ -9,20 +9,14 @@ import (
     "os/signal"
     "syscall"
 
-    "github.com/cilium/ebpf/link"
+    "github.com/cilium/ebpf"
     "github.com/cilium/ebpf/ringbuf"
+    "github.com/cilium/ebpf/link"
     "github.com/cilium/ebpf/rlimit"
 )
 
 func main() {
     //TODO: ctx? to stop things?
-
-    //TODO: cleanup
-    fn := "sys_write"
-    fn1 := "sys_read"
-    fn2 := "sys_dup2"
-    fn3 := "sys_close"
-    fn4 := "do_exit"
 
     // lock memory for eBPF
     if err := rlimit.RemoveMemlock(); err != nil {
@@ -35,38 +29,25 @@ func main() {
     }
     defer objs.Close()
 
-    // attach count_packets
-    kp, err := link.Kprobe(fn, objs.KprobeWrite, nil)
-
-    if err != nil {
-	log.Fatal("Opening kprobe: %s", err)
+    //TODO: do this smarter (https://github.com/cilium/ebpf/discussions/1186#discussioncomment-7423490)
+    kprobes := map[string]*ebpf.Program{
+	"sys_write": objs.KprobeWrite, 
+	"sys_read": objs.KprobeRead,
+	"sys_dup2": objs.KprobeDup2,
+	"sys_close": objs.KprobeClose,
+	"do_exit": objs.KprobeExit,
     }
-    defer kp.Close()
 
-    kp1, err := link.Kprobe(fn1, objs.KprobeRead, nil)
-    if err != nil {
-        log.Fatal("Opening kprobe: %s", err)
+    // attach kprobes
+    for fn, probe := range(kprobes) {
+	kp, err := link.Kprobe(fn, probe, nil)
+
+	if err != nil {
+	    log.Fatal("Opening kprobe: %s", err)
+	}
+	defer kp.Close()
     }
-    defer kp1.Close()
-
-    kp2, err := link.Kprobe(fn2, objs.KprobeDup2, nil)
-    if err != nil {
-        log.Fatal("Opening kprobe: %s", err)
-    }
-    defer kp2.Close()
-
-    kp3, err := link.Kprobe(fn3, objs.KprobeClose, nil)
-    if err != nil {
-        log.Fatal("Opening kprobe: %s", err)
-    }
-    defer kp3.Close()
-
-    kp4, err := link.Kprobe(fn4, objs.KprobeExit, nil)
-    if err != nil {
-	log.Fatal("Opening kprobe: %s", err)
-    }
-    defer kp4.Close()
-
+    
     // ringbuf reader
     rd, err := ringbuf.NewReader(objs.PipeWrites)
     if err != nil {
