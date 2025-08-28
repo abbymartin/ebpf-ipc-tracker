@@ -15,8 +15,14 @@ import (
 )
 
 func main() {
+    //TODO: ctx? to stop things?
+
+    //TODO: cleanup
     fn := "sys_write"
+    fn1 := "sys_read"
     fn2 := "sys_dup2"
+    fn3 := "sys_close"
+    fn4 := "do_exit"
 
     // lock memory for eBPF
     if err := rlimit.RemoveMemlock(); err != nil {
@@ -27,7 +33,7 @@ func main() {
     if err := loadPipe_trackerObjects(&objs, nil); err != nil {
         log.Fatal("Loading eBPF objects:", err)
     }
-    defer objs.Close() // close at end of function?
+    defer objs.Close()
 
     // attach count_packets
     kp, err := link.Kprobe(fn, objs.KprobeWrite, nil)
@@ -37,25 +43,48 @@ func main() {
     }
     defer kp.Close()
 
+    kp1, err := link.Kprobe(fn1, objs.KprobeRead, nil)
+    if err != nil {
+        log.Fatal("Opening kprobe: %s", err)
+    }
+    defer kp1.Close()
+
     kp2, err := link.Kprobe(fn2, objs.KprobeDup2, nil)
     if err != nil {
         log.Fatal("Opening kprobe: %s", err)
     }
     defer kp2.Close()
 
+    kp3, err := link.Kprobe(fn3, objs.KprobeClose, nil)
+    if err != nil {
+        log.Fatal("Opening kprobe: %s", err)
+    }
+    defer kp3.Close()
+
+    kp4, err := link.Kprobe(fn4, objs.KprobeExit, nil)
+    if err != nil {
+	log.Fatal("Opening kprobe: %s", err)
+    }
+    defer kp4.Close()
+
     // ringbuf reader
-    rd, err := ringbuf.NewReader(objs.Writes)
+    rd, err := ringbuf.NewReader(objs.PipeWrites)
     if err != nil {
 	log.Fatalf("opening ringbuf reader %s", err)
     }
     defer rd.Close()
-    // log.Printf("Counting incoming packets on %s..", ifname)
 
-    stop := make(chan os.Signal, 5)
+    rd2, err := ringbuf.NewReader(objs.PipeReads)
+    if err != nil {
+        log.Fatalf("opening ringbuf reader %s", err)
+    }
+    defer rd2.Close()
+
+    stop := make(chan os.Signal, 1)
     signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 
     go func() {
-	<-stop
+	<-stop // wait for SIGINT signal
 
 	if err := rd.Close(); err != nil {
 	    log.Fatalf("closing ringbuf reader: %s", err)
@@ -67,6 +96,7 @@ func main() {
     var event pipe_trackerEvent
     for {
 	record, err := rd.Read()
+	//record2, err2 := rd2.Read()
 
 	if err != nil {
 	    if errors.Is(err, ringbuf.ErrClosed) {
@@ -82,6 +112,6 @@ func main() {
 	    continue
 	}
 
-	log.Printf("pid: %d, fd: %d", event.Pid, event.Fd)
+	log.Printf("PIPE WRITE: pid: %d, ts: %d", event.Pid, event.Ts)
     }
 }

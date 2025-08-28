@@ -16,9 +16,11 @@ import (
 type pipe_trackerEvent struct {
 	_    structs.HostLayout
 	Pid  uint32
-	Fd   int32
+	_    [4]byte
 	Ts   uint64
 	Comm [16]int8
+	Type int8
+	_    [7]byte
 }
 
 // loadPipe_tracker returns the embedded CollectionSpec for pipe_tracker.
@@ -63,7 +65,10 @@ type pipe_trackerSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type pipe_trackerProgramSpecs struct {
+	KprobeClose *ebpf.ProgramSpec `ebpf:"kprobe_close"`
 	KprobeDup2  *ebpf.ProgramSpec `ebpf:"kprobe_dup2"`
+	KprobeExit  *ebpf.ProgramSpec `ebpf:"kprobe_exit"`
+	KprobeRead  *ebpf.ProgramSpec `ebpf:"kprobe_read"`
 	KprobeWrite *ebpf.ProgramSpec `ebpf:"kprobe_write"`
 }
 
@@ -72,8 +77,9 @@ type pipe_trackerProgramSpecs struct {
 // It can be passed ebpf.CollectionSpec.Assign.
 type pipe_trackerMapSpecs struct {
 	PipeReaders *ebpf.MapSpec `ebpf:"pipe_readers"`
+	PipeReads   *ebpf.MapSpec `ebpf:"pipe_reads"`
 	PipeWriters *ebpf.MapSpec `ebpf:"pipe_writers"`
-	Writes      *ebpf.MapSpec `ebpf:"writes"`
+	PipeWrites  *ebpf.MapSpec `ebpf:"pipe_writes"`
 }
 
 // pipe_trackerVariableSpecs contains global variables before they are loaded into the kernel.
@@ -103,15 +109,17 @@ func (o *pipe_trackerObjects) Close() error {
 // It can be passed to loadPipe_trackerObjects or ebpf.CollectionSpec.LoadAndAssign.
 type pipe_trackerMaps struct {
 	PipeReaders *ebpf.Map `ebpf:"pipe_readers"`
+	PipeReads   *ebpf.Map `ebpf:"pipe_reads"`
 	PipeWriters *ebpf.Map `ebpf:"pipe_writers"`
-	Writes      *ebpf.Map `ebpf:"writes"`
+	PipeWrites  *ebpf.Map `ebpf:"pipe_writes"`
 }
 
 func (m *pipe_trackerMaps) Close() error {
 	return _Pipe_trackerClose(
 		m.PipeReaders,
+		m.PipeReads,
 		m.PipeWriters,
-		m.Writes,
+		m.PipeWrites,
 	)
 }
 
@@ -125,13 +133,19 @@ type pipe_trackerVariables struct {
 //
 // It can be passed to loadPipe_trackerObjects or ebpf.CollectionSpec.LoadAndAssign.
 type pipe_trackerPrograms struct {
+	KprobeClose *ebpf.Program `ebpf:"kprobe_close"`
 	KprobeDup2  *ebpf.Program `ebpf:"kprobe_dup2"`
+	KprobeExit  *ebpf.Program `ebpf:"kprobe_exit"`
+	KprobeRead  *ebpf.Program `ebpf:"kprobe_read"`
 	KprobeWrite *ebpf.Program `ebpf:"kprobe_write"`
 }
 
 func (p *pipe_trackerPrograms) Close() error {
 	return _Pipe_trackerClose(
+		p.KprobeClose,
 		p.KprobeDup2,
+		p.KprobeExit,
+		p.KprobeRead,
 		p.KprobeWrite,
 	)
 }
