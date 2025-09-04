@@ -30,22 +30,36 @@ func main() {
     defer objs.Close()
 
     //TODO: do this smarter (https://github.com/cilium/ebpf/discussions/1186#discussioncomment-7423490)
-    kprobes := map[string]*ebpf.Program{
-	"sys_write": objs.KprobeWrite, 
-	"sys_read": objs.KprobeRead,
-	"sys_dup2": objs.KprobeDup2,
-	"sys_close": objs.KprobeClose,
-	"do_exit": objs.KprobeExit,
+    tps := map[string]*ebpf.Program{
+	"sys_enter_write": objs.TraceWrite, 
+	//"sys_enter_read": objs.TraceRead,
+	"sys_enter_dup2": objs.TraceDup2,
+	"sys_enter_close": objs.TraceClose,
+	//"do_exit": objs.KprobeExit,
     }
 
-    // attach kprobes
-    for fn, probe := range(kprobes) {
-	kp, err := link.Kprobe(fn, probe, nil)
+    // do exit kprobe
+    kp, err := link.Kprobe("do_exit", objs.KprobeExit, nil)
+
+    if err != nil {
+        log.Fatal("Opening kprobe: %s", err)
+    }
+    defer kp.Close()
+
+    tp, err := link.Tracepoint("syscalls", "sys_enter_read", objs.TraceRead, nil);
+    if err != nil {
+        log.Fatal("Opening read: %s", err)
+    }
+    defer tp.Close()
+
+    // attach tracepoints
+    for fn, prog := range(tps) {
+	tp, err := link.Tracepoint("syscalls", fn, prog, nil)
 
 	if err != nil {
-	    log.Fatal("Opening kprobe: %s", err)
+	    log.Fatal("Opening tracepoint: %s", err)
 	}
-	defer kp.Close()
+	defer tp.Close()
     }
     
     // ringbuf reader

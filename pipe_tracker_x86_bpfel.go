@@ -65,11 +65,11 @@ type pipe_trackerSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type pipe_trackerProgramSpecs struct {
-	KprobeClose *ebpf.ProgramSpec `ebpf:"kprobe_close"`
-	KprobeDup2  *ebpf.ProgramSpec `ebpf:"kprobe_dup2"`
-	KprobeExit  *ebpf.ProgramSpec `ebpf:"kprobe_exit"`
-	KprobeRead  *ebpf.ProgramSpec `ebpf:"kprobe_read"`
-	KprobeWrite *ebpf.ProgramSpec `ebpf:"kprobe_write"`
+	KprobeExit *ebpf.ProgramSpec `ebpf:"kprobe_exit"`
+	TraceClose *ebpf.ProgramSpec `ebpf:"trace_close"`
+	TraceDup2  *ebpf.ProgramSpec `ebpf:"trace_dup2"`
+	TraceRead  *ebpf.ProgramSpec `ebpf:"trace_read"`
+	TraceWrite *ebpf.ProgramSpec `ebpf:"trace_write"`
 }
 
 // pipe_trackerMapSpecs contains maps before they are loaded into the kernel.
@@ -133,20 +133,20 @@ type pipe_trackerVariables struct {
 //
 // It can be passed to loadPipe_trackerObjects or ebpf.CollectionSpec.LoadAndAssign.
 type pipe_trackerPrograms struct {
-	KprobeClose *ebpf.Program `ebpf:"kprobe_close"`
-	KprobeDup2  *ebpf.Program `ebpf:"kprobe_dup2"`
-	KprobeExit  *ebpf.Program `ebpf:"kprobe_exit"`
-	KprobeRead  *ebpf.Program `ebpf:"kprobe_read"`
-	KprobeWrite *ebpf.Program `ebpf:"kprobe_write"`
+	KprobeExit *ebpf.Program `ebpf:"kprobe_exit"`
+	TraceClose *ebpf.Program `ebpf:"trace_close"`
+	TraceDup2  *ebpf.Program `ebpf:"trace_dup2"`
+	TraceRead  *ebpf.Program `ebpf:"trace_read"`
+	TraceWrite *ebpf.Program `ebpf:"trace_write"`
 }
 
 func (p *pipe_trackerPrograms) Close() error {
 	return _Pipe_trackerClose(
-		p.KprobeClose,
-		p.KprobeDup2,
 		p.KprobeExit,
-		p.KprobeRead,
-		p.KprobeWrite,
+		p.TraceClose,
+		p.TraceDup2,
+		p.TraceRead,
+		p.TraceWrite,
 	)
 }
 

@@ -5,6 +5,24 @@
 #include <bpf/bpf_tracing.h>
 #include <bpf/bpf_core_read.h>
 
+//TODO: make header for perf event types? (if I go down the tracepoint route)
+
+struct tp_hdr {
+    u16 common_type;
+    u8  common_flags;
+    u8  common_preempt_count;
+    s32 common_pid;
+};
+
+struct sys_enter_read_ctx {
+    unsigned long padding;
+
+    int __syscall_nr;
+    unsigned int fd;
+    char *buf;
+    size_t count;
+};
+
 struct event {
     u32 pid;
     //int fd;
@@ -40,8 +58,8 @@ struct {
     __type(value, int);
 } pipe_readers SEC(".maps");
 
-SEC("kprobe/sys_enter_read")
-int BPF_KPROBE(kprobe_read, struct pt_regs *regs) {
+SEC("tp/syscalls/sys_enter_read")
+int trace_read(struct sys_enter_read_ctx *ctx) {
     struct event *e;
 
     u64 ts = bpf_ktime_get_ns();
@@ -65,8 +83,8 @@ int BPF_KPROBE(kprobe_read, struct pt_regs *regs) {
     return 0;
 }
 
-SEC("kprobe/sys_enter_write")
-int BPF_KPROBE(kprobe_write, struct pt_regs *regs) {
+SEC("tp/syscalls/sys_enter_write")
+int trace_write(void *regs) {
     struct event *e;
 
     u64 ts = bpf_ktime_get_ns();
@@ -96,8 +114,8 @@ int BPF_KPROBE(kprobe_write, struct pt_regs *regs) {
 
 // pipe setup uses dup2 syscall to map stdout or stdin to pipe fds (makes possible to exec w pipe)
 // track dup2 that use stdout or stdin and add to pipe_readers or pipe_writers
-SEC("kprobe/sys_enter_dup2")
-int BPF_KPROBE(kprobe_dup2, struct pt_regs *regs) {
+SEC("tracepoint/syscalls/sys_enter_dup2")
+int trace_dup2(struct pt_regs *regs) {
      u32 pid = bpf_get_current_pid_tgid();
 
      int oldfd = PT_REGS_PARM1_CORE(regs);
@@ -120,8 +138,8 @@ int BPF_KPROBE(kprobe_dup2, struct pt_regs *regs) {
      return 0;
 }
 
-SEC("kprobe/sys_enter_close")
-int BPF_KPROBE(kprobe_close, struct pt_regs *regs) {
+SEC("tracepoint/syscalls/sys_enter_close")
+int trace_close(struct pt_regs *regs) {
     u32 pid = bpf_get_current_pid_tgid();
 
     int fd = PT_REGS_PARM1_CORE(regs);
