@@ -76,10 +76,9 @@ type pipe_trackerProgramSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type pipe_trackerMapSpecs struct {
+	PipeEvents  *ebpf.MapSpec `ebpf:"pipe_events"`
 	PipeReaders *ebpf.MapSpec `ebpf:"pipe_readers"`
-	PipeReads   *ebpf.MapSpec `ebpf:"pipe_reads"`
 	PipeWriters *ebpf.MapSpec `ebpf:"pipe_writers"`
-	PipeWrites  *ebpf.MapSpec `ebpf:"pipe_writes"`
 }
 
 // pipe_trackerVariableSpecs contains global variables before they are loaded into the kernel.
@@ -108,18 +107,16 @@ func (o *pipe_trackerObjects) Close() error {
 //
 // It can be passed to loadPipe_trackerObjects or ebpf.CollectionSpec.LoadAndAssign.
 type pipe_trackerMaps struct {
+	PipeEvents  *ebpf.Map `ebpf:"pipe_events"`
 	PipeReaders *ebpf.Map `ebpf:"pipe_readers"`
-	PipeReads   *ebpf.Map `ebpf:"pipe_reads"`
 	PipeWriters *ebpf.Map `ebpf:"pipe_writers"`
-	PipeWrites  *ebpf.Map `ebpf:"pipe_writes"`
 }
 
 func (m *pipe_trackerMaps) Close() error {
 	return _Pipe_trackerClose(
+		m.PipeEvents,
 		m.PipeReaders,
-		m.PipeReads,
 		m.PipeWriters,
-		m.PipeWrites,
 	)
 }
 

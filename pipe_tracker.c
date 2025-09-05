@@ -18,13 +18,8 @@ struct {
     __uint(type, BPF_MAP_TYPE_RINGBUF); 
     __uint(max_entries, 1 << 24);
     __type(value, struct event);
-} pipe_writes SEC(".maps");
+} pipe_events SEC(".maps");
 
-struct {
-    __uint(type, BPF_MAP_TYPE_RINGBUF);
-    __uint(max_entries, 1 << 24);
-    __type(value, struct event);
-} pipe_reads SEC(".maps");
 
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
@@ -52,13 +47,14 @@ int BPF_KPROBE(kprobe_read, struct pt_regs *regs) {
         return 0;
     }
 
-    e = bpf_ringbuf_reserve(&pipe_reads, sizeof(struct event), 0);
+    e = bpf_ringbuf_reserve(&pipe_events, sizeof(struct event), 0);
     if (!e) {
         return 0;
     }
 
     e->pid = pid;
     e->ts = ts;
+    e->type = 'R';
 
     bpf_ringbuf_submit(e, 0);
 
@@ -79,13 +75,14 @@ int BPF_KPROBE(kprobe_write, struct pt_regs *regs) {
 
     //int fd = PT_REGS_PARM1_CORE(regs);
     
-    e = bpf_ringbuf_reserve(&pipe_writes, sizeof(struct event), 0);
+    e = bpf_ringbuf_reserve(&pipe_events, sizeof(struct event), 0);
     if (!e) {
     	return 0;
     }
 
     e->pid = pid;
     e->ts = ts;
+    e->type = 'W';
     //e->fd = fd;
     //bpf_get_current_comm(&e->comm, 16);
 

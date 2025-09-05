@@ -8,6 +8,7 @@ import (
     "os"
     "os/signal"
     "syscall"
+    "fmt"
 
     "github.com/cilium/ebpf"
     "github.com/cilium/ebpf/ringbuf"
@@ -16,7 +17,7 @@ import (
 )
 
 func main() {
-    // lock memory for eBPF
+    // unlock memory for eBPF
     if err := rlimit.RemoveMemlock(); err != nil {
         log.Fatal("Removing memlock:", err)
     }
@@ -46,51 +47,54 @@ func main() {
         defer kp.Close()
     }
     
-    // ringbuf reader
-    rd, err := ringbuf.NewReader(objs.PipeWrites)
+    // reader for ebpf pipe events
+    rd, err := ringbuf.NewReader(objs.PipeEvents)
     if err != nil {
-	    log.Fatalf("opening ringbuf reader %s", err)
+	    log.Fatalf("Opening ringbuf reader %s", err)
     }
     defer rd.Close()
 
-    rd2, err := ringbuf.NewReader(objs.PipeReads)
-    if err != nil {
-        log.Fatalf("opening ringbuf reader %s", err)
-    }
-    defer rd2.Close()
-
+    // terminate signal
     stop := make(chan os.Signal, 1)
     signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 
-    go func() {
-	<-stop // wait for SIGINT signal
+    events := make(chan string)
 
-	if err := rd.Close(); err != nil {
-	    log.Fatalf("closing ringbuf reader: %s", err)
-	}
+    log.Println("Waiting...")
+
+    // Goroutine for pipe events
+    go func() {
+        var event pipe_trackerEvent
+        for {
+            record, err := rd.Read()
+
+            if err != nil {
+                if errors.Is(err, ringbuf.ErrClosed) {
+                    return
+                }
+                log.Printf("Error reading from reader: %s", err)
+                continue
+            }
+
+            if err := binary.Read(bytes.NewBuffer(record.RawSample), binary.LittleEndian, &event); err != nil {
+                log.Printf("Error parsing ringbuf event %s", err)
+                continue
+            }
+
+            events <- fmt.Sprintf("PIPE EVENT: pid: %d, ts: %d, type: %c", event.Pid, event.Ts, event.Type)
+        }
     }()
 
-    log.Println("waiting.....")
-
-    var event pipe_trackerEvent
     for {
-        record, err := rd.Read()
-        record2, err2 := rd2.Read()
-
-        if err != nil {s
-            if errors.Is(err, ringbuf.ErrClosed) {
-                log.Println("received signal, exiting..")
-                return
+        select {
+		case out := <-events:
+			fmt.Println(out)
+		case <-stop:
+            if err := rd.Close(); err != nil {
+                log.Fatalf("Closing ringbuf reader: %s", err)
             }
-            log.Printf("reading from reader: %s", err)
-            continue
+			fmt.Println("Exiting...")
+			return
         }
-
-        if err := binary.Read(bytes.NewBuffer(record.RawSample), binary.LittleEndian, &event); err != nil {
-            log.Printf("parsing ringbuf event %s", err)
-            continue
-        }
-
-        log.Printf("PIPE WRITE: pid: %d, ts: %d", event.Pid, event.Ts)
     }
 }
