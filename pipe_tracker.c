@@ -98,26 +98,26 @@ int BPF_KPROBE(kprobe_write, struct pt_regs *regs) {
 // track dup2 that use stdout or stdin and add to pipe_readers or pipe_writers
 SEC("kprobe/sys_enter_dup2")
 int BPF_KPROBE(kprobe_dup2, struct pt_regs *regs) {
-     u32 pid = bpf_get_current_pid_tgid();
+    u32 pid = bpf_get_current_pid_tgid();
 
-     int oldfd = PT_REGS_PARM1_CORE(regs);
-     int newfd = PT_REGS_PARM2_CORE(regs);
-     //bpf_printk("old: %d, new: %d", oldfd, newfd);
+    int oldfd = PT_REGS_PARM1_CORE(regs);
+    int newfd = PT_REGS_PARM2_CORE(regs);
+    //bpf_printk("old: %d, new: %d", oldfd, newfd);
 
-     if (oldfd == 0 || oldfd == 1) {
-	bpf_map_delete_elem(&pipe_readers, &pid);
-	bpf_map_delete_elem(&pipe_writers, &pid);
-     }
+    if (oldfd == 0 || oldfd == 1) {
+	    bpf_map_delete_elem(&pipe_readers, &pid);
+	    bpf_map_delete_elem(&pipe_writers, &pid);
+    }
 
-     if (newfd == 0) { // mapping to stdin: add pid to pipe_readers
+    if (newfd == 0) { // mapping to stdin: add pid to pipe_readers
         bpf_printk("add reader: %d", pid);
-	bpf_map_update_elem(&pipe_readers, &pid, &pid, BPF_ANY);
-     } else if (newfd == 1) { // mapping to stdout: add pid to pipe_writers
-	bpf_printk("add writer: %d", pid);
-	bpf_map_update_elem(&pipe_writers, &pid, &pid, BPF_ANY);
-     }
+	    bpf_map_update_elem(&pipe_readers, &pid, &pid, BPF_ANY);
+    } else if (newfd == 1) { // mapping to stdout: add pid to pipe_writers
+	    bpf_printk("add writer: %d", pid);
+	    bpf_map_update_elem(&pipe_writers, &pid, &pid, BPF_ANY);
+    }
 
-     return 0;
+    return 0;
 }
 
 SEC("kprobe/sys_enter_close")
@@ -129,11 +129,11 @@ int BPF_KPROBE(kprobe_close, struct pt_regs *regs) {
 
     if (fd == 0) {    
         int s = bpf_map_delete_elem(&pipe_readers, &pid);
-	bpf_printk("close: delete reader %d, result: %d", pid, s);
-	return 0;
+	    bpf_printk("close: delete reader %d, result: %d", pid, s);
+	    return 0;
     } else if (fd == 1) {
         int s = bpf_map_delete_elem(&pipe_writers, &pid);
-	bpf_printk("close: delete writer %d, result: %d", pid, s);
+	    bpf_printk("close: delete writer %d, result: %d", pid, s);
     }
 
     return 0;
