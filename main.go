@@ -35,6 +35,9 @@ func main() {
         "sys_dup2": objs.KprobeDup2,
         "sys_close": objs.KprobeClose,
         "do_exit": objs.KprobeExit,
+        "sys_socket": objs.KprobeSocket,
+        "sys_connect": objs.KprobeConnect,
+        "sys_accept": objs.KprobeAccept,
     }
 
     // attach kprobes

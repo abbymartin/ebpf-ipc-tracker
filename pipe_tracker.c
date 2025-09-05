@@ -35,6 +35,10 @@ struct {
     __type(value, int);
 } pipe_readers SEC(".maps");
 
+
+// TODO: look into: process can map own read AND write (why?)
+// will pipe always call dup2? also what else can result in dup2 on stdin/stdout instead of pipe?
+// testing: adding a lot more writers than readers, shouldn't write end need a read end?
 SEC("kprobe/sys_enter_read")
 int BPF_KPROBE(kprobe_read, struct pt_regs *regs) {
     struct event *e;
@@ -117,20 +121,25 @@ int BPF_KPROBE(kprobe_dup2, struct pt_regs *regs) {
     return 0;
 }
 
+// remove from pipe reader/writer maps upon fd close or process exit
 SEC("kprobe/sys_enter_close")
 int BPF_KPROBE(kprobe_close, struct pt_regs *regs) {
     u32 pid = bpf_get_current_pid_tgid();
 
     int fd = PT_REGS_PARM1_CORE(regs);
-    //bpf_printk("close file: %d for pid: %d", fd, pid);
 
-    if (fd == 0) {    
+    if (fd == 0) {
         int s = bpf_map_delete_elem(&pipe_readers, &pid);
-	    bpf_printk("close: delete reader %d, result: %d", pid, s);
+        if (s == 0) {
+            bpf_printk("close: delete reader %d", pid);
+        }
+
 	    return 0;
     } else if (fd == 1) {
         int s = bpf_map_delete_elem(&pipe_writers, &pid);
-	    bpf_printk("close: delete writer %d, result: %d", pid, s);
+        if (s == 0) {
+            bpf_printk("close: delete writer %d", pid);
+        }
     }
 
     return 0;
@@ -141,9 +150,44 @@ int BPF_KPROBE(kprobe_exit, struct pt_regs *regs) {
     u32 pid = bpf_get_current_pid_tgid();
 
     int s = bpf_map_delete_elem(&pipe_readers, &pid);
-    bpf_printk("exit: delete reader %d, result: %d", pid, s);
+    if (s == 0) {
+        bpf_printk("exit: delete reader %d", pid);
+    }
+    
     s = bpf_map_delete_elem(&pipe_writers, &pid);
-    bpf_printk("exit: delete writer %d, result: %d", pid, s);
+    if (s == 0) {
+        bpf_printk("exit: delete writer %d", pid);
+    }
+
+    return 0;
+}
+
+// socket tracking (TODO: maybe move to separate C file?)
+// TODO: differentiate between ipc socket and nework socket
+SEC("kprobe/sys_enter_socket")
+int BPF_KPROBE(kprobe_socket, struct pt_regs *regs) {
+    u32 pid = bpf_get_current_pid_tgid();
+
+    bpf_printk("socket");
+
+    return 0;
+}
+
+//TODO: is there a better way to trace sockets?
+SEC("kprobe/sys_enter_connect") 
+int BPF_KPROBE(kprobe_connect, struct pt_regs *regs) {
+    u32 pid = bpf_get_current_pid_tgid();
+
+    bpf_printk("connect (client)");
+
+    return 0;
+}
+
+SEC("kprobe/sys_enter_accept") // find way to test this (ie programs that do IPC via unix sockets)
+int BPF_KPROBE(kprobe_accept, struct pt_regs *regs) {
+    u32 pid = bpf_get_current_pid_tgid();
+
+    bpf_printk("accept (server)");
 
     return 0;
 }
