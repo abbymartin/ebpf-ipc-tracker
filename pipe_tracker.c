@@ -27,14 +27,14 @@ struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 128);
     __type(key, u32); // key: pid
-    __type(value, int);
+    __type(value, int); // value: fd
 } pipe_writers SEC(".maps");
 
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 128);
     __type(key, u32); // key: pid
-    __type(value, int);
+    __type(value, int); // value: fd
 } pipe_readers SEC(".maps");
 
 // map to keep track of fds we know are pipes
@@ -42,7 +42,7 @@ struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 128);
     __type(key, int); // key: fd
-    __type(value, u32); 
+    __type(value, u32); // value: pid
 } pipe_fds SEC(".maps");
 
 // TODO: change to tracepoints where possible (more efficient than kprobes)
@@ -56,13 +56,16 @@ int BPF_PROG(pipe2, int *filedes, int ret) {
     u32 pid = bpf_get_current_pid_tgid();
 
     int fds[2];
-
     bpf_probe_read_user(&fds, sizeof(fds), filedes);
-    bpf_printk("fd0: %d, fd1: %d", fds[0], fds[1]);
 
+    // add initial pipe fds to pipe_readers/pipe_writers to cover bases, removed upon re-map
     bpf_map_update_elem(&pipe_fds, &fds[0], &pid, BPF_ANY);
-    bpf_map_update_elem(&pipe_fds, &fds[1], &pid, BPF_ANY);
+    bpf_map_update_elem(&pipe_readers, &pid, &fds[0], BPF_ANY);
+    bpf_printk("adding reader %d", fds[0]);
 
+    bpf_map_update_elem(&pipe_fds, &fds[1], &pid, BPF_ANY);
+    bpf_map_update_elem(&pipe_writers, &pid, &fds[1], BPF_ANY);
+    bpf_printk("adding writer %d", fds[1]);
     return 0;
 }
 
@@ -81,19 +84,33 @@ int BPF_KPROBE(kprobe_dup2, struct pt_regs *regs) {
     }
 
     // make sure we are mapping a pipe fd
-    if(!bpf_map_lookup_elem(&pipe_fds, &oldfd)) {
+    u32 *oldpid = bpf_map_lookup_elem(&pipe_fds, &oldfd);
+    if(!oldpid) {
         return 0;
     }
 
-    bpf_map_delete_elem(&pipe_fds, &oldfd);
-
+    
     if (newfd == 0) { // mapping to stdin: add pid to pipe_readers
+        // remove old pipe_reader
+        int s = bpf_map_delete_elem(&pipe_readers, oldpid);
+        if (!s) {
+            bpf_printk("dup2: delete reader %d, fd: %d", pid, oldfd);
+        }
+
         bpf_printk("adding reader %d", oldfd);
 	    bpf_map_update_elem(&pipe_readers, &pid, &newfd, BPF_ANY);
     } else if (newfd == 1) { // mapping to stdout: add pid to pipe_writers
+        // remove old pipe_writer
+        int s = bpf_map_delete_elem(&pipe_writers, oldpid);
+        if (!s) {
+            bpf_printk("dup2: delete writer %d, fd: %d", pid, oldfd);
+        }
+
         bpf_printk("adding writer %d", oldfd);
 	    bpf_map_update_elem(&pipe_writers, &pid, &newfd, BPF_ANY);
     }
+
+    bpf_map_delete_elem(&pipe_fds, &oldfd);
 
     return 0;
 }
@@ -163,6 +180,7 @@ int BPF_KPROBE(kprobe_close, struct pt_regs *regs) {
 
     int fd = PT_REGS_PARM1_CORE(regs);
 
+    bpf_map_delete_elem(&pipe_fds, &fd);
     int *reader_fd = bpf_map_lookup_elem(&pipe_readers, &pid);
     int *writer_fd = bpf_map_lookup_elem(&pipe_writers, &pid);
 
@@ -173,12 +191,12 @@ int BPF_KPROBE(kprobe_close, struct pt_regs *regs) {
 
     if (reader_fd) {
         int s = bpf_map_delete_elem(&pipe_readers, &pid);
-        if (s == 0) {
+        if (!s) {
             bpf_printk("close: delete reader %d, fd: %d", pid, *reader_fd);
         }
     } else if (writer_fd) {
         int s = bpf_map_delete_elem(&pipe_writers, &pid);
-        if (s == 0) {
+        if (!s) {
             bpf_printk("close: delete writer %d, fd: %d", pid, *writer_fd);
         }
     }
