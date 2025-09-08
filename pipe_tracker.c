@@ -16,12 +16,12 @@ struct event {
     char type; // 'R' vs 'W'
 };
 
+// ringbuf holding all pipe reads and writes
 struct {
     __uint(type, BPF_MAP_TYPE_RINGBUF); 
     __uint(max_entries, 1 << 24);
     __type(value, struct event);
 } pipe_events SEC(".maps");
-
 
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
@@ -37,10 +37,67 @@ struct {
     __type(value, int);
 } pipe_readers SEC(".maps");
 
+// map to keep track of fds we know are pipes
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 128);
+    __type(key, int); // key: fd
+    __type(value, u32); 
+} pipe_fds SEC(".maps");
 
-// TODO: look into: process can map own read AND write (why?)
-// will pipe always call dup2? also what else can result in dup2 on stdin/stdout instead of pipe?
-// testing: adding a lot more writers than readers, shouldn't write end need a read end?
+// TODO: change to tracepoints where possible (more efficient than kprobes)
+// ^ current kernel bug w perf may be causing issues https://bugs.launchpad.net/ubuntu/+source/linux-hwe-6.14/+bug/2117159
+
+SEC("fexit/do_pipe2")
+int BPF_PROG(pipe2, int *filedes, int ret) {
+    if (ret != 0)
+        return 0;
+
+    u32 pid = bpf_get_current_pid_tgid();
+
+    int fds[2];
+
+    bpf_probe_read_user(&fds, sizeof(fds), filedes);
+    bpf_printk("fd0: %d, fd1: %d", fds[0], fds[1]);
+
+    bpf_map_update_elem(&pipe_fds, &fds[0], &pid, BPF_ANY);
+    bpf_map_update_elem(&pipe_fds, &fds[1], &pid, BPF_ANY);
+
+    return 0;
+}
+
+// pipe setup uses dup2 syscall to map stdout or stdin to pipe fds (makes possible to exec w pipe)
+SEC("kprobe/sys_enter_dup2")
+int BPF_KPROBE(kprobe_dup2, struct pt_regs *regs) {
+    u32 pid = bpf_get_current_pid_tgid();
+
+    int oldfd = PT_REGS_PARM1_CORE(regs);
+    int newfd = PT_REGS_PARM2_CORE(regs);
+    //bpf_printk("old: %d, new: %d", oldfd, newfd);
+
+    if (oldfd == 0 || oldfd == 1) {
+	    bpf_map_delete_elem(&pipe_readers, &pid);
+	    bpf_map_delete_elem(&pipe_writers, &pid);
+    }
+
+    // make sure we are mapping a pipe fd
+    if(!bpf_map_lookup_elem(&pipe_fds, &oldfd)) {
+        return 0;
+    }
+
+    bpf_map_delete_elem(&pipe_fds, &oldfd);
+
+    if (newfd == 0) { // mapping to stdin: add pid to pipe_readers
+        bpf_printk("adding reader %d", oldfd);
+	    bpf_map_update_elem(&pipe_readers, &pid, &newfd, BPF_ANY);
+    } else if (newfd == 1) { // mapping to stdout: add pid to pipe_writers
+        bpf_printk("adding writer %d", oldfd);
+	    bpf_map_update_elem(&pipe_writers, &pid, &newfd, BPF_ANY);
+    }
+
+    return 0;
+}
+
 SEC("kprobe/sys_enter_read")
 int BPF_KPROBE(kprobe_read, struct pt_regs *regs) {
     struct event *e;
@@ -48,8 +105,10 @@ int BPF_KPROBE(kprobe_read, struct pt_regs *regs) {
     u64 ts = bpf_ktime_get_ns();
     u32 pid = bpf_get_current_pid_tgid();
 
+    int fd = PT_REGS_PARM2_CORE(regs);
+
     // check if pid is in pipe_readers
-    if (!bpf_map_lookup_elem(&pipe_readers, &pid)) {
+    if (!bpf_map_lookup_elem(&pipe_writers, &pid)) {
         return 0;
     }
 
@@ -76,7 +135,7 @@ int BPF_KPROBE(kprobe_write, struct pt_regs *regs) {
     
     // check if pid is in pipe_writers
     if (!bpf_map_lookup_elem(&pipe_writers, &pid)) {
-         return 0;
+        return 0;
     }
 
     //int fd = PT_REGS_PARM1_CORE(regs);
@@ -97,32 +156,6 @@ int BPF_KPROBE(kprobe_write, struct pt_regs *regs) {
     return 0;
 }
 
-// pipe setup uses dup2 syscall to map stdout or stdin to pipe fds (makes possible to exec w pipe)
-// track dup2 that use stdout or stdin and add to pipe_readers or pipe_writers
-SEC("kprobe/sys_enter_dup2")
-int BPF_KPROBE(kprobe_dup2, struct pt_regs *regs) {
-    u32 pid = bpf_get_current_pid_tgid();
-
-    int oldfd = PT_REGS_PARM1_CORE(regs);
-    int newfd = PT_REGS_PARM2_CORE(regs);
-    //bpf_printk("old: %d, new: %d", oldfd, newfd);
-
-    if (oldfd == 0 || oldfd == 1) {
-	    bpf_map_delete_elem(&pipe_readers, &pid);
-	    bpf_map_delete_elem(&pipe_writers, &pid);
-    }
-
-    if (newfd == 0) { // mapping to stdin: add pid to pipe_readers
-        bpf_printk("add reader: %d", pid);
-	    bpf_map_update_elem(&pipe_readers, &pid, &pid, BPF_ANY);
-    } else if (newfd == 1) { // mapping to stdout: add pid to pipe_writers
-	    bpf_printk("add writer: %d", pid);
-	    bpf_map_update_elem(&pipe_writers, &pid, &pid, BPF_ANY);
-    }
-
-    return 0;
-}
-
 // remove from pipe reader/writer maps upon fd close or process exit
 SEC("kprobe/sys_enter_close")
 int BPF_KPROBE(kprobe_close, struct pt_regs *regs) {
@@ -130,17 +163,23 @@ int BPF_KPROBE(kprobe_close, struct pt_regs *regs) {
 
     int fd = PT_REGS_PARM1_CORE(regs);
 
-    if (fd == 0) {
+    int *reader_fd = bpf_map_lookup_elem(&pipe_readers, &pid);
+    int *writer_fd = bpf_map_lookup_elem(&pipe_writers, &pid);
+
+    // check if closing a pipe reader/writer
+    if (!(reader_fd && *reader_fd == fd) || (writer_fd && *writer_fd == fd)) {
+        return 0;
+    }
+
+    if (reader_fd) {
         int s = bpf_map_delete_elem(&pipe_readers, &pid);
         if (s == 0) {
-            bpf_printk("close: delete reader %d", pid);
+            bpf_printk("close: delete reader %d, fd: %d", pid, *reader_fd);
         }
-
-	    return 0;
-    } else if (fd == 1) {
+    } else if (writer_fd) {
         int s = bpf_map_delete_elem(&pipe_writers, &pid);
         if (s == 0) {
-            bpf_printk("close: delete writer %d", pid);
+            bpf_printk("close: delete writer %d, fd: %d", pid, *writer_fd);
         }
     }
 
@@ -153,63 +192,13 @@ int BPF_KPROBE(kprobe_exit, struct pt_regs *regs) {
 
     int s = bpf_map_delete_elem(&pipe_readers, &pid);
     if (s == 0) {
-        bpf_printk("exit: delete reader %d", pid);
+       bpf_printk("exit: delete reader %d", pid);
     }
     
     s = bpf_map_delete_elem(&pipe_writers, &pid);
     if (s == 0) {
-        bpf_printk("exit: delete writer %d", pid);
+       bpf_printk("exit: delete writer %d", pid);
     }
-
-    return 0;
-}
-
-// socket tracking (TODO: maybe move to separate C file?)
-// TODO: differentiate between ipc socket and nework socket
-SEC("kprobe/sys_enter_socket")
-int BPF_KPROBE(kprobe_socket, struct pt_regs *regs) {
-    u32 pid = bpf_get_current_pid_tgid();
-
-    //bpf_printk("socket");
-
-    return 0;
-}
-
-//TODO: is there a better way to trace sockets?
-SEC("kprobe/sys_enter_connect") 
-int BPF_KPROBE(kprobe_connect, struct pt_regs *regs) {
-    u32 pid = bpf_get_current_pid_tgid();
-
-    //from connect() manpage
-
-    // int connect(int sockfd, const struct sockaddr *addr,
-    //                socklen_t addrlen);
-
-    // struct sockaddr {
-    //        sa_family_t     sa_family;      /* Address family */
-    //        char            sa_data[];      /* Socket address */
-    //    };
-
-    int sockfd = PT_REGS_PARM1_CORE(regs);
-    struct sockaddr *addr = (struct sockaddr *)PT_REGS_PARM2_CORE(regs);
-    //struct sockaddr *sa = (struct sockaddr *)sockaddr;
-    //sa_family_t family = sock_addr->sa_family;
-
-    u16 sa_family = 0;
-    bpf_probe_read(&sa_family, sizeof(sa_family), &addr->sa_family);
-
-    if (sa_family == AF_UNIX) {
-        bpf_printk("unix, pid = %d", pid);
-    }
-
-    return 0;
-}
-
-SEC("kprobe/sys_enter_accept") // find way to test this (ie programs that do IPC via unix sockets)
-int BPF_KPROBE(kprobe_accept, struct pt_regs *regs) {
-    u32 pid = bpf_get_current_pid_tgid();
-
-    bpf_printk("accept (server)");
 
     return 0;
 }
