@@ -221,4 +221,64 @@ int BPF_KPROBE(kprobe_exit, struct pt_regs *regs) {
     return 0;
 }
 
+// Unix socket tracing
+
+// *server steps*
+// socket() -> bind() -> listen() -> accept()
+
+// *client steps*
+// socket() -> connect()
+
+SEC("kprobe/sys_enter_socket")
+int BPF_KPROBE(kprobe_socket, struct pt_regs *regs) {
+    u32 pid = bpf_get_current_pid_tgid();
+    int domain = PT_REGS_PARM1_CORE(regs);
+    if (domain == AF_UNIX) {
+        bpf_printk("socket: unix, pid = %d", pid);
+    }
+    
+    return 0;
+}
+
+SEC("kprobe/sys_enter_connect") 
+int BPF_KPROBE(kprobe_connect, struct pt_regs *regs) {
+    u32 pid = bpf_get_current_pid_tgid();
+
+    // struct sockaddr {
+    //        sa_family_t     sa_family;      /* Address family */
+    //        char            sa_data[];      /* Socket address */
+    //    };
+
+    int sockfd = PT_REGS_PARM1_CORE(regs);
+    struct sockaddr *addr = (struct sockaddr *)PT_REGS_PARM2_CORE(regs);
+    
+    // null check
+    if(!addr) return 0;
+
+    u16 sa_family = 0;
+    bpf_probe_read(&sa_family, sizeof(sa_family), &addr->sa_family);
+
+    if (sa_family == AF_UNIX) {
+        bpf_printk("connect: unix, pid = %d, family=%d", pid, sa_family);
+    }
+
+    return 0;
+}
+
+SEC("fexit/__sys_accept4")
+int BPF_PROG(accept, int sockfd, struct sockaddr *addr, int *addrlen, int ret) { // TODO: there might be an issue with this function signature
+    u32 pid = bpf_get_current_pid_tgid();
+
+    // null check
+    if (!addr) return 0;
+    u16 sa_family = 0;
+    bpf_probe_read(&sa_family, sizeof(sa_family), &addr->sa_family);
+
+    if (sa_family == AF_UNIX) {
+        bpf_printk("accept: unix, pid = %d, family=%d", pid, sa_family);
+    }
+
+    return 0;
+}
+
 char LICENSE[] SEC("license") = "Dual BSD/GPL";

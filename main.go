@@ -35,10 +35,10 @@ func main() {
         "sys_dup2": objs.KprobeDup2,
         "sys_close": objs.KprobeClose,
         "do_exit": objs.KprobeExit,
-        //"sys_pipe2": objs.KprobePipe2,
-        // "sys_socket": objs.KprobeSocket,
-        // "sys_connect": objs.KprobeConnect,
-        // "sys_accept": objs.KprobeAccept,
+        // "sys_pipe2": objs.KprobePipe2,
+        "sys_socket": objs.KprobeSocket,
+        "sys_connect": objs.KprobeConnect,
+        //"sys_accept4": objs.KprobeAccept,
     }
 
     // attach kprobes
@@ -51,13 +51,21 @@ func main() {
         defer kp.Close()
     }
 
-    link, err := link.AttachTracing(link.TracingOptions{
+    l, err := link.AttachTracing(link.TracingOptions{
 		Program: objs.Pipe2,
 	})
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer link.Close()
+	defer l.Close()
+
+    l2, err := link.AttachTracing(link.TracingOptions{
+		Program: objs.Accept,
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer l2.Close()
     
     // reader for ebpf pipe events
     rd, err := ringbuf.NewReader(objs.PipeEvents)

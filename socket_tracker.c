@@ -1,5 +1,7 @@
 //go:build ignore
- 
+
+#define AF_UNIX 1
+
 SEC("kprobe/sys_enter_socket")
 int BPF_KPROBE(kprobe_socket, struct pt_regs *regs) {
     u32 pid = bpf_get_current_pid_tgid();

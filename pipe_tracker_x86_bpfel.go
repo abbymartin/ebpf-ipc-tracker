@@ -65,12 +65,15 @@ type pipe_trackerSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type pipe_trackerProgramSpecs struct {
-	KprobeClose *ebpf.ProgramSpec `ebpf:"kprobe_close"`
-	KprobeDup2  *ebpf.ProgramSpec `ebpf:"kprobe_dup2"`
-	KprobeExit  *ebpf.ProgramSpec `ebpf:"kprobe_exit"`
-	KprobeRead  *ebpf.ProgramSpec `ebpf:"kprobe_read"`
-	KprobeWrite *ebpf.ProgramSpec `ebpf:"kprobe_write"`
-	Pipe2       *ebpf.ProgramSpec `ebpf:"pipe2"`
+	Accept        *ebpf.ProgramSpec `ebpf:"accept"`
+	KprobeClose   *ebpf.ProgramSpec `ebpf:"kprobe_close"`
+	KprobeConnect *ebpf.ProgramSpec `ebpf:"kprobe_connect"`
+	KprobeDup2    *ebpf.ProgramSpec `ebpf:"kprobe_dup2"`
+	KprobeExit    *ebpf.ProgramSpec `ebpf:"kprobe_exit"`
+	KprobeRead    *ebpf.ProgramSpec `ebpf:"kprobe_read"`
+	KprobeSocket  *ebpf.ProgramSpec `ebpf:"kprobe_socket"`
+	KprobeWrite   *ebpf.ProgramSpec `ebpf:"kprobe_write"`
+	Pipe2         *ebpf.ProgramSpec `ebpf:"pipe2"`
 }
 
 // pipe_trackerMapSpecs contains maps before they are loaded into the kernel.
@@ -134,20 +137,26 @@ type pipe_trackerVariables struct {
 //
 // It can be passed to loadPipe_trackerObjects or ebpf.CollectionSpec.LoadAndAssign.
 type pipe_trackerPrograms struct {
-	KprobeClose *ebpf.Program `ebpf:"kprobe_close"`
-	KprobeDup2  *ebpf.Program `ebpf:"kprobe_dup2"`
-	KprobeExit  *ebpf.Program `ebpf:"kprobe_exit"`
-	KprobeRead  *ebpf.Program `ebpf:"kprobe_read"`
-	KprobeWrite *ebpf.Program `ebpf:"kprobe_write"`
-	Pipe2       *ebpf.Program `ebpf:"pipe2"`
+	Accept        *ebpf.Program `ebpf:"accept"`
+	KprobeClose   *ebpf.Program `ebpf:"kprobe_close"`
+	KprobeConnect *ebpf.Program `ebpf:"kprobe_connect"`
+	KprobeDup2    *ebpf.Program `ebpf:"kprobe_dup2"`
+	KprobeExit    *ebpf.Program `ebpf:"kprobe_exit"`
+	KprobeRead    *ebpf.Program `ebpf:"kprobe_read"`
+	KprobeSocket  *ebpf.Program `ebpf:"kprobe_socket"`
+	KprobeWrite   *ebpf.Program `ebpf:"kprobe_write"`
+	Pipe2         *ebpf.Program `ebpf:"pipe2"`
 }
 
 func (p *pipe_trackerPrograms) Close() error {
 	return _Pipe_trackerClose(
+		p.Accept,
 		p.KprobeClose,
+		p.KprobeConnect,
 		p.KprobeDup2,
 		p.KprobeExit,
 		p.KprobeRead,
+		p.KprobeSocket,
 		p.KprobeWrite,
 		p.Pipe2,
 	)
