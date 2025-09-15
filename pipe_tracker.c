@@ -5,6 +5,8 @@
 #include <bpf/bpf_tracing.h>
 #include <bpf/bpf_core_read.h>
 
+#define STDIN 0
+#define STDOUT 1
 #define AF_UNIX 1
 
 struct event {
@@ -46,8 +48,9 @@ struct {
 } pipe_fds SEC(".maps");
 
 // TODO: change to tracepoints where possible (more efficient than kprobes)
-// ^ current kernel bug w perf may be causing issues https://bugs.launchpad.net/ubuntu/+source/linux-hwe-6.14/+bug/2117159
+// ^ kernel bug w perf may be causing issues https://bugs.launchpad.net/ubuntu/+source/linux-hwe-6.14/+bug/2117159
 
+// TODO: cannot handle multiple pipes within same process or series of pipes (ls | grep a | grep b) due to hashmap setup only allowing 1 read and 1 write end per pid
 SEC("fexit/do_pipe2")
 int BPF_PROG(pipe2, int *filedes, int ret) {
     if (ret != 0)
@@ -61,11 +64,11 @@ int BPF_PROG(pipe2, int *filedes, int ret) {
     // add initial pipe fds to pipe_readers/pipe_writers to cover bases, removed upon re-map
     bpf_map_update_elem(&pipe_fds, &fds[0], &pid, BPF_ANY);
     bpf_map_update_elem(&pipe_readers, &pid, &fds[0], BPF_ANY);
-    bpf_printk("adding reader %d", fds[0]);
+    bpf_printk("pipe2: adding reader: %d, pid: %d", fds[0], pid);
 
     bpf_map_update_elem(&pipe_fds, &fds[1], &pid, BPF_ANY);
     bpf_map_update_elem(&pipe_writers, &pid, &fds[1], BPF_ANY);
-    bpf_printk("adding writer %d", fds[1]);
+    bpf_printk("pipe2: adding writer %d, pid: %d", fds[1], pid);
     return 0;
 }
 
@@ -78,35 +81,30 @@ int BPF_KPROBE(kprobe_dup2, struct pt_regs *regs) {
     int newfd = PT_REGS_PARM2_CORE(regs);
     //bpf_printk("old: %d, new: %d", oldfd, newfd);
 
-    if (oldfd == 0 || oldfd == 1) {
-	    bpf_map_delete_elem(&pipe_readers, &pid);
-	    bpf_map_delete_elem(&pipe_writers, &pid);
-    }
-
     // make sure we are mapping a pipe fd
     u32 *oldpid = bpf_map_lookup_elem(&pipe_fds, &oldfd);
     if(!oldpid) {
         return 0;
     }
-
     
-    if (newfd == 0) { // mapping to stdin: add pid to pipe_readers
+    // Q: will a pipe ever map to something other than STDIN or STDOUT?
+    if (newfd == STDIN) { // mapping to stdin: add pid to pipe_readers
         // remove old pipe_reader
-        int s = bpf_map_delete_elem(&pipe_readers, oldpid);
+        int s = bpf_map_delete_elem(&pipe_readers, &oldpid);
         if (!s) {
             bpf_printk("dup2: delete reader %d, fd: %d", pid, oldfd);
         }
 
-        bpf_printk("adding reader %d", oldfd);
+        bpf_printk("dup2: map reader %d to %d for pid: %d", oldfd, newfd, pid);
 	    bpf_map_update_elem(&pipe_readers, &pid, &newfd, BPF_ANY);
-    } else if (newfd == 1) { // mapping to stdout: add pid to pipe_writers
+    } else if (newfd == STDOUT) { // mapping to stdout: add pid to pipe_writers
         // remove old pipe_writer
-        int s = bpf_map_delete_elem(&pipe_writers, oldpid);
+        int s = bpf_map_delete_elem(&pipe_writers, &oldpid);
         if (!s) {
             bpf_printk("dup2: delete writer %d, fd: %d", pid, oldfd);
         }
 
-        bpf_printk("adding writer %d", oldfd);
+        bpf_printk("dup2: map writer %d to %d for pid: %d", oldfd, newfd, pid);
 	    bpf_map_update_elem(&pipe_writers, &pid, &newfd, BPF_ANY);
     }
 
@@ -121,13 +119,15 @@ int BPF_KPROBE(kprobe_read, struct pt_regs *regs) {
 
     u64 ts = bpf_ktime_get_ns();
     u32 pid = bpf_get_current_pid_tgid();
-
-    int fd = PT_REGS_PARM2_CORE(regs);
+    int fd = PT_REGS_PARM1_CORE(regs);
 
     // check if pid is in pipe_readers
-    if (!bpf_map_lookup_elem(&pipe_writers, &pid)) {
+    int *pipe_fd = bpf_map_lookup_elem(&pipe_readers, &pid);
+    if (!pipe_fd || *pipe_fd != fd) {
         return 0;
     }
+
+    bpf_printk("read: fd: %d, pipe_fd: %d", fd, *pipe_fd);
 
     e = bpf_ringbuf_reserve(&pipe_events, sizeof(struct event), 0);
     if (!e) {
@@ -149,13 +149,15 @@ int BPF_KPROBE(kprobe_write, struct pt_regs *regs) {
 
     u64 ts = bpf_ktime_get_ns();
     u32 pid = bpf_get_current_pid_tgid();
+    int fd = PT_REGS_PARM1_CORE(regs);
     
     // check if pid is in pipe_writers
-    if (!bpf_map_lookup_elem(&pipe_writers, &pid)) {
+    int *pipe_fd = bpf_map_lookup_elem(&pipe_writers, &pid);
+    if (!pipe_fd || *pipe_fd != fd) {
         return 0;
     }
 
-    //int fd = PT_REGS_PARM1_CORE(regs);
+    bpf_printk("write: fd: %d, pipe_fd: %d", fd, *pipe_fd);
     
     e = bpf_ringbuf_reserve(&pipe_events, sizeof(struct event), 0);
     if (!e) {
@@ -179,22 +181,17 @@ int BPF_KPROBE(kprobe_close, struct pt_regs *regs) {
     u32 pid = bpf_get_current_pid_tgid();
 
     int fd = PT_REGS_PARM1_CORE(regs);
-
-    bpf_map_delete_elem(&pipe_fds, &fd);
+    
     int *reader_fd = bpf_map_lookup_elem(&pipe_readers, &pid);
     int *writer_fd = bpf_map_lookup_elem(&pipe_writers, &pid);
 
-    // check if closing a pipe reader/writer
-    if (!(reader_fd && *reader_fd == fd) || (writer_fd && *writer_fd == fd)) {
-        return 0;
-    }
 
-    if (reader_fd) {
+    if (reader_fd && *reader_fd == fd) {
         int s = bpf_map_delete_elem(&pipe_readers, &pid);
         if (!s) {
             bpf_printk("close: delete reader %d, fd: %d", pid, *reader_fd);
         }
-    } else if (writer_fd) {
+    } else if (writer_fd && *writer_fd == fd) {
         int s = bpf_map_delete_elem(&pipe_writers, &pid);
         if (!s) {
             bpf_printk("close: delete writer %d, fd: %d", pid, *writer_fd);
@@ -225,7 +222,6 @@ int BPF_KPROBE(kprobe_exit, struct pt_regs *regs) {
 
 // *server steps*
 // socket() -> bind() -> listen() -> accept()
-
 // *client steps*
 // socket() -> connect()
 
@@ -266,7 +262,7 @@ int BPF_KPROBE(kprobe_connect, struct pt_regs *regs) {
 }
 
 SEC("fexit/__sys_accept4")
-int BPF_PROG(accept, int sockfd, struct sockaddr *addr, int *addrlen, int ret) { // TODO: there might be an issue with this function signature
+int BPF_PROG(accept, int sockfd, struct sockaddr *addr, int *addrlen, int ret) { // Q: double check this function signature
     u32 pid = bpf_get_current_pid_tgid();
 
     // null check
